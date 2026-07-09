@@ -1,41 +1,69 @@
-const DEFAULTS = {
-  focusPoints: 0,
-  highScore: 0,
-  currentStreak: 0,
-  procrastinationTax: 0,
-  history: {},
-};
+function fmt(ms) {
+  if (ms <= 0) return '0s';
+  const s = Math.round(ms / 1000);
+  const m = Math.floor(s / 60);
+  const r = s % 60;
+  if (m <= 0) return `${r}s`;
+  return `${m}m ${r}s`;
+}
 
-function render(stats) {
-  document.getElementById("focusPoints").textContent = stats.focusPoints;
-  document.getElementById("highScore").textContent = stats.highScore;
-  document.getElementById("currentStreak").innerHTML =
-    stats.currentStreak + '<span>🔥</span>';
-  document.getElementById("procrastinationTax").textContent = stats.procrastinationTax;
+async function render() {
+  const data = await chrome.runtime.sendMessage({ type: 'GET_DASHBOARD' });
+  if (!data) return;
 
-  // 7-day chart
-  const chart = document.getElementById("chart");
-  chart.innerHTML = "";
-  const days = [];
-  for (let i = 6; i >= 0; i--) {
-    const d = new Date();
-    d.setDate(d.getDate() - i);
-    const key = d.toISOString().slice(0, 10);
-    days.push({ key, label: d.toLocaleDateString(undefined, { weekday: "narrow" }) });
+  document.getElementById('fp').textContent = data.focusPoints;
+  document.getElementById('tax').textContent = data.procrastinationTax;
+  document.getElementById('daily').textContent = data.dailyFP;
+
+  const streakEl = document.getElementById('streak');
+  streakEl.textContent = data.streakDays > 0 ? `Streak ${data.streakDays}d` : '';
+
+  const list = document.getElementById('tabList');
+  const empty = document.getElementById('empty');
+  list.innerHTML = '';
+  if (!data.tabs.length) {
+    empty.hidden = false;
+    return;
   }
-  const values = days.map((d) => (stats.history?.[d.key]?.earned) || 0);
-  const max = Math.max(1, ...values);
-  days.forEach((d, i) => {
-    const bar = document.createElement("div");
-    bar.className = "bar";
-    bar.style.height = `${(values[i] / max) * 100}%`;
-    bar.title = `${d.key}: +${values[i]}`;
-    const label = document.createElement("div");
-    label.className = "day";
-    label.textContent = d.label;
-    bar.appendChild(label);
-    chart.appendChild(bar);
+  empty.hidden = true;
+
+  for (const t of data.tabs) {
+    const totalMs = t.allocatedMinutes * 60 * 1000;
+    const remaining = Math.max(0, t.expiresAt - data.now);
+    const pct = Math.max(0, Math.min(100, (remaining / totalMs) * 100));
+
+    const el = document.createElement('div');
+    el.className = 'tab-item';
+    const favSrc = t.favIconUrl ? t.favIconUrl : '';
+    el.innerHTML = `
+      <div class="tab-row">
+        ${favSrc ? `<img class="tab-fav" src="${favSrc}" alt="" />` : `<div class="tab-fav"></div>`}
+        <div class="tab-title"></div>
+        <button class="tab-close" data-id="${t.id}">Close</button>
+      </div>
+      <div class="progress"><div class="progress-fill" style="width:${pct}%"></div></div>
+      <div class="tab-meta">
+        <span>${t.allocatedMinutes}m allocated</span>
+        <span class="${t.expired || remaining <= 0 ? 'expired' : ''}">${t.expired || remaining <= 0 ? 'Expired' : fmt(remaining) + ' left'}</span>
+      </div>
+    `;
+    el.querySelector('.tab-title').textContent = t.title;
+    list.appendChild(el);
+  }
+
+  list.querySelectorAll('.tab-close').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const id = parseInt(btn.dataset.id, 10);
+      await chrome.runtime.sendMessage({ type: 'CLOSE_TAB', tabId: id });
+      render();
+    });
   });
 }
 
-chrome.storage.local.get(DEFAULTS, render);
+document.getElementById('reset').addEventListener('click', async () => {
+  await chrome.runtime.sendMessage({ type: 'RESET_ALL_TIMERS' });
+  render();
+});
+
+render();
+setInterval(render, 1000);

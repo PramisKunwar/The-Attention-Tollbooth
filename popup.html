@@ -1,46 +1,50 @@
 <!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <title>Attention Tollbooth</title>
-    <link rel="stylesheet" href="popup.css" />
-  </head>
-  <body>
-    <div class="wrap">
-      <header>
-        <span class="emoji">🌊</span>
-        <div>
-          <h1>Attention Tollbooth</h1>
-          <p>Spend your attention wisely.</p>
-        </div>
-      </header>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>The Attention Tollbooth</title>
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <div class="wrap">
+    <header class="hdr">
+      <div class="brand">
+        <svg width="22" height="22" viewBox="0 0 48 48" fill="none">
+          <rect x="6" y="30" width="8" height="14" rx="1.5" fill="#41BEDD"/>
+          <rect x="34" y="30" width="8" height="14" rx="1.5" fill="#41BEDD"/>
+          <rect x="6" y="20" width="36" height="6" rx="1.5" fill="#53E5DE"/>
+          <circle cx="24" cy="12" r="4" fill="#5CF4F4"/>
+        </svg>
+        <div class="brand-name">ATTENTION<br/>TOLLBOOTH</div>
+      </div>
+      <div class="streak" id="streak"></div>
+    </header>
 
-      <section class="grid">
-        <div class="stat">
-          <div class="label">Focus Points</div>
-          <div class="value" id="focusPoints">0</div>
-        </div>
-        <div class="stat">
-          <div class="label">High Score</div>
-          <div class="value" id="highScore">0</div>
-        </div>
-        <div class="stat">
-          <div class="label">Streak</div>
-          <div class="value" id="currentStreak">0<span>🔥</span></div>
-        </div>
-        <div class="stat tax">
-          <div class="label">Procrastination Tax</div>
-          <div class="value" id="procrastinationTax">0</div>
-        </div>
-      </section>
+    <section class="stats">
+      <div class="stat">
+        <div class="stat-num" id="fp">0</div>
+        <div class="stat-label">Focus Points</div>
+      </div>
+      <div class="stat">
+        <div class="stat-num alt" id="tax">0</div>
+        <div class="stat-label">Tax</div>
+      </div>
+      <div class="stat">
+        <div class="stat-num teal" id="daily">0</div>
+        <div class="stat-label">Today</div>
+      </div>
+    </section>
 
-      <section class="chart-wrap">
-        <div class="chart-title">Last 7 days</div>
-        <div class="chart" id="chart"></div>
-      </section>
+    <section class="tabs-section">
+      <div class="section-title">Active Tolls</div>
+      <div id="tabList" class="tab-list"></div>
+      <div id="empty" class="empty" hidden>Clear focus. No active tolls.</div>
+    </section>
 
-      <footer>Stay mindful. Close tabs early to earn points ✨</footer>
-    </div>
-    <script src="popup.js"></script>
-  </body>
+    <footer class="ftr">
+      <button id="reset" class="reset-btn">Reset all timers</button>
+    </footer>
+  </div>
+  <script src="popup.js"></script>
+</body>
 </html>

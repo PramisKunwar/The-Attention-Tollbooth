@@ -2,8 +2,8 @@
   "manifest_version": 3,
   "name": "The Attention Tollbooth",
   "version": "1.0.0",
-  "description": "Turn every new tab into a mindful commitment. Allocate attention, earn Focus Points, and dodge the Procrastination Tax.",
-  "permissions": ["tabs", "storage", "activeTab", "scripting"],
+  "description": "Pay your attention toll before you enter a tab. A playful focus tool that turns tab-hoarding into a game.",
+  "permissions": ["tabs", "storage", "alarms", "scripting"],
   "host_permissions": ["<all_urls>"],
   "background": {
     "service_worker": "background.js"
@@ -12,21 +12,23 @@
     {
       "matches": ["<all_urls>"],
       "js": ["content.js"],
-      "css": ["content.css"],
-      "run_at": "document_idle"
+      "run_at": "document_idle",
+      "all_frames": false
     }
   ],
   "action": {
     "default_popup": "popup.html",
     "default_icon": {
-      "16": "icons/icon.png",
-      "48": "icons/icon.png",
-      "128": "icons/icon.png"
-    }
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    },
+    "default_title": "The Attention Tollbooth"
   },
-  "icons": {
-    "16": "icons/icon.png",
-    "48": "icons/icon.png",
-    "128": "icons/icon.png"
-  }
+  "web_accessible_resources": [
+    {
+      "resources": ["assets/*"],
+      "matches": ["<all_urls>"]
+    }
+  ]
 }

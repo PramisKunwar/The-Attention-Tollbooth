@@ -1,170 +1,232 @@
 // The Attention Tollbooth — background service worker
-// Manages per-tab timers, focus points, and the procrastination tax badge.
+// Manages timers, scoring, and cross-tab state.
 
-const DEFAULTS = {
-  focusPoints: 0,
-  highScore: 0,
-  currentStreak: 0,
-  procrastinationTax: 0,
-  history: {}, // { 'YYYY-MM-DD': { earned, lost } }
-};
+const DEFAULT_MINUTES = 5;
+const DECISION_SECONDS = 10;
 
-const POINTS = {
-  1: 5,
-  5: 8,
-  15: 15,
-  30: 20,
-  60: 25,
-};
+// ---------- Storage helpers ----------
 
-// tabState[tabId] = { minutes, remainingMs, lastActiveAt, expired, committed }
-const tabState = {};
-
-async function getStats() {
-  const data = await chrome.storage.local.get(DEFAULTS);
-  return { ...DEFAULTS, ...data };
+async function getState() {
+  const { state } = await chrome.storage.local.get('state');
+  return state || {
+    focusPoints: 0,
+    procrastinationTax: 0,
+    streakDays: 0,
+    lastActiveDate: null,
+    dailyFP: 0,
+    dailyDate: null,
+    tabs: {} // tabId -> {url, allocatedMinutes, startTs, expiresAt, expired}
+  };
 }
 
-async function setStats(patch) {
-  await chrome.storage.local.set(patch);
-}
-
-async function updateBadge() {
-  const { procrastinationTax } = await getStats();
-  const text = procrastinationTax > 0 ? String(procrastinationTax) : "";
-  await chrome.action.setBadgeText({ text });
-  await chrome.action.setBadgeBackgroundColor({ color: "#03045E" });
+async function setState(state) {
+  await chrome.storage.local.set({ state });
 }
 
 function todayKey() {
-  return new Date().toISOString().slice(0, 10);
+  const d = new Date();
+  return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
 }
 
-async function recordHistory(field, amount) {
-  const stats = await getStats();
-  const key = todayKey();
-  const history = stats.history || {};
-  const day = history[key] || { earned: 0, lost: 0 };
-  day[field] = (day[field] || 0) + amount;
-  history[key] = day;
-
-  // Keep only last 7 days
-  const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
-  Object.keys(history).forEach((k) => {
-    if (new Date(k).getTime() < cutoff) delete history[k];
-  });
-
-  await setStats({ history });
-}
-
-async function awardPoints(minutes) {
-  const stats = await getStats();
-  const gained = POINTS[minutes] || 0;
-  const focusPoints = stats.focusPoints + gained;
-  const currentStreak = stats.currentStreak + 1;
-  const highScore = Math.max(stats.highScore, focusPoints);
-  await setStats({ focusPoints, currentStreak, highScore });
-  await recordHistory("earned", gained);
-  return gained;
-}
-
-async function penalize(minutes) {
-  const stats = await getStats();
-  const potential = POINTS[minutes] || 0;
-  const loss = Math.round(potential * 0.3);
-  const focusPoints = Math.max(0, stats.focusPoints - loss);
-  const procrastinationTax = stats.procrastinationTax + 1;
-  await setStats({
-    focusPoints,
-    procrastinationTax,
-    currentStreak: 0,
-  });
-  await recordHistory("lost", loss);
-  await updateBadge();
-  return loss;
-}
-
-// Timer tick: only decrement active tab
-setInterval(async () => {
-  const [activeTab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
-  if (!activeTab) return;
-  const state = tabState[activeTab.id];
-  if (!state || !state.committed || state.expired) return;
-
-  state.remainingMs -= 1000;
-  if (state.remainingMs <= 0) {
-    state.remainingMs = 0;
-    state.expired = true;
-    await penalize(state.minutes);
-    try {
-      await chrome.tabs.sendMessage(activeTab.id, { type: "TIME_UP" });
-    } catch (e) {
-      // content script may not be loaded on this page (e.g. chrome://)
+async function rollDaily(state) {
+  const today = todayKey();
+  if (state.dailyDate !== today) {
+    // Check streak continuation
+    if (state.dailyDate && state.dailyFP >= 50) {
+      const prev = new Date(state.dailyDate);
+      const now = new Date(today);
+      const diff = Math.round((now - prev) / (1000 * 60 * 60 * 24));
+      if (diff === 1) {
+        state.streakDays = (state.streakDays || 0) + 1;
+      } else {
+        state.streakDays = 1;
+      }
+    } else if (!state.dailyDate) {
+      state.streakDays = 0;
+    } else {
+      state.streakDays = 0;
     }
+    state.dailyDate = today;
+    state.dailyFP = 0;
   }
-}, 1000);
+  return state;
+}
+
+// ---------- Badge ----------
+
+async function updateBadge() {
+  const state = await getState();
+  const tax = state.procrastinationTax || 0;
+  await chrome.action.setBadgeText({ text: tax > 0 ? String(tax) : '' });
+  await chrome.action.setBadgeBackgroundColor({ color: '#FF4FA7' });
+}
+
+// ---------- Timers ----------
+
+async function startTimer(tabId, minutes) {
+  const state = await getState();
+  const now = Date.now();
+  state.tabs[tabId] = {
+    url: (await chrome.tabs.get(tabId).catch(() => ({})))?.url || '',
+    allocatedMinutes: minutes,
+    startTs: now,
+    expiresAt: now + minutes * 60 * 1000,
+    expired: false
+  };
+  await setState(state);
+  await chrome.alarms.create(`timer_${tabId}`, { when: state.tabs[tabId].expiresAt });
+}
+
+async function extendTimer(tabId, minutes = 5) {
+  const state = await getState();
+  const t = state.tabs[tabId];
+  if (!t) return;
+  const now = Date.now();
+  const base = t.expired ? now : Math.max(t.expiresAt, now);
+  t.expiresAt = base + minutes * 60 * 1000;
+  t.allocatedMinutes = (t.allocatedMinutes || 0) + minutes;
+  if (t.expired) {
+    // Extending after expiration counts as tax
+    state.procrastinationTax = (state.procrastinationTax || 0) + 1;
+  }
+  // Award small FP for re-committing
+  state.dailyFP = (state.dailyFP || 0) + 2;
+  state.focusPoints = (state.focusPoints || 0) + 2;
+  t.expired = false;
+  await setState(state);
+  await chrome.alarms.create(`timer_${tabId}`, { when: t.expiresAt });
+  await updateBadge();
+  // Tell content script to clear expiration UI
+  chrome.tabs.sendMessage(tabId, { type: 'CLEAR_EXPIRATION' }).catch(() => {});
+}
+
+// ---------- Alarm firing ----------
+
+chrome.alarms.onAlarm.addListener(async (alarm) => {
+  if (!alarm.name.startsWith('timer_')) return;
+  const tabId = parseInt(alarm.name.split('_')[1], 10);
+  const state = await getState();
+  const t = state.tabs[tabId];
+  if (!t) return;
+  t.expired = true;
+  state.procrastinationTax = (state.procrastinationTax || 0) + 1;
+  await setState(state);
+  await updateBadge();
+  chrome.tabs.sendMessage(tabId, { type: 'APPLY_EXPIRATION' }).catch(() => {});
+});
+
+// ---------- Tab lifecycle ----------
+
+chrome.tabs.onCreated.addListener(async (tab) => {
+  // Content script will initialize itself and request a toll.
+  // Nothing to do here — the toll UI is triggered by the content script
+  // once it detects it has no active timer.
+});
+
+chrome.tabs.onRemoved.addListener(async (tabId, removeInfo) => {
+  if (removeInfo.isWindowClosing) return;
+  const state = await rollDaily(await getState());
+  const t = state.tabs[tabId];
+  if (!t) return;
+  const now = Date.now();
+  if (!t.expired && now < t.expiresAt) {
+    // Closed early — award points
+    let fp = 10;
+    const elapsed = now - t.startTs;
+    const total = t.expiresAt - t.startTs;
+    if (total > 0 && elapsed <= total * 0.1) fp += 5;
+    state.focusPoints = (state.focusPoints || 0) + fp;
+    state.dailyFP = (state.dailyFP || 0) + fp;
+  }
+  delete state.tabs[tabId];
+  await chrome.alarms.clear(`timer_${tabId}`);
+  await setState(state);
+  await updateBadge();
+});
+
+// ---------- Message router ----------
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   (async () => {
-    const tabId = sender.tab?.id;
-
-    if (msg.type === "COMMIT_TIME" && tabId != null) {
-      tabState[tabId] = {
-        minutes: msg.minutes,
-        remainingMs: msg.minutes * 60 * 1000,
-        expired: false,
-        committed: true,
-      };
-      sendResponse({ ok: true });
-      return;
-    }
-
-    if (msg.type === "ADD_FIVE" && tabId != null) {
-      const state = tabState[tabId];
-      if (state) {
-        state.remainingMs += 5 * 60 * 1000;
-        state.expired = false;
-      }
-      sendResponse({ ok: true });
-      return;
-    }
-
-    if (msg.type === "CLOSE_TAB" && tabId != null) {
-      const state = tabState[tabId];
-      if (state && !state.expired && state.committed) {
-        const gained = await awardPoints(state.minutes);
-        sendResponse({ ok: true, gained });
-      } else {
-        sendResponse({ ok: true, gained: 0 });
-      }
-      delete tabState[tabId];
-      chrome.tabs.remove(tabId);
-      return;
-    }
-
-    if (msg.type === "GET_STATE" && tabId != null) {
-      sendResponse({ state: tabState[tabId] || null });
-      return;
+    const tabId = sender.tab?.id ?? msg.tabId;
+    switch (msg.type) {
+      case 'REQUEST_TOLL_INFO':
+        sendResponse({
+          decisionSeconds: DECISION_SECONDS,
+          defaultMinutes: DEFAULT_MINUTES
+        });
+        break;
+      case 'PAY_TOLL':
+        await startTimer(tabId, Math.max(1, Math.min(60, msg.minutes || DEFAULT_MINUTES)));
+        sendResponse({ ok: true });
+        break;
+      case 'CHECK_TAB':
+        {
+          const state = await getState();
+          sendResponse({ tab: state.tabs[tabId] || null, now: Date.now() });
+        }
+        break;
+      case 'EXTEND':
+        await extendTimer(tabId, 5);
+        sendResponse({ ok: true });
+        break;
+      case 'CLOSE_TAB':
+        await chrome.tabs.remove(msg.tabId ?? tabId);
+        sendResponse({ ok: true });
+        break;
+      case 'GET_DASHBOARD':
+        {
+          const state = await rollDaily(await getState());
+          await setState(state);
+          const tabsInfo = [];
+          for (const [id, t] of Object.entries(state.tabs)) {
+            try {
+              const tab = await chrome.tabs.get(parseInt(id, 10));
+              tabsInfo.push({
+                id: parseInt(id, 10),
+                title: tab.title || tab.url || 'Untitled',
+                favIconUrl: tab.favIconUrl || '',
+                allocatedMinutes: t.allocatedMinutes,
+                expiresAt: t.expiresAt,
+                expired: t.expired
+              });
+            } catch {}
+          }
+          sendResponse({
+            focusPoints: state.focusPoints || 0,
+            procrastinationTax: state.procrastinationTax || 0,
+            streakDays: state.streakDays || 0,
+            dailyFP: state.dailyFP || 0,
+            tabs: tabsInfo,
+            now: Date.now()
+          });
+        }
+        break;
+      case 'RESET_ALL_TIMERS':
+        {
+          const state = await getState();
+          const now = Date.now();
+          for (const [id, t] of Object.entries(state.tabs)) {
+            t.expiresAt = now + t.allocatedMinutes * 60 * 1000;
+            t.startTs = now;
+            t.expired = false;
+            await chrome.alarms.create(`timer_${id}`, { when: t.expiresAt });
+          }
+          await setState(state);
+          sendResponse({ ok: true });
+        }
+        break;
+      default:
+        sendResponse({ ok: false });
     }
   })();
-  return true; // async response
+  return true;
 });
 
-chrome.tabs.onRemoved.addListener(async (tabId) => {
-  const state = tabState[tabId];
-  if (state && state.committed && !state.expired) {
-    // User closed early → award points
-    await awardPoints(state.minutes);
-  }
-  delete tabState[tabId];
+chrome.runtime.onInstalled.addListener(async () => {
+  await updateBadge();
 });
 
-// Refresh resets the timer: onUpdated with status 'loading' means reload/navigation
-chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
-  if (changeInfo.status === "loading") {
-    delete tabState[tabId];
-  }
+chrome.runtime.onStartup.addListener(async () => {
+  await updateBadge();
 });
-
-chrome.runtime.onInstalled.addListener(updateBadge);
-chrome.runtime.onStartup.addListener(updateBadge);
