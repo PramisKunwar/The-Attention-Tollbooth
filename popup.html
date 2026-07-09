@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Attention Tollbooth</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <div class="wrap">
+      <header>
+        <span class="emoji">🌊</span>
+        <div>
+          <h1>Attention Tollbooth</h1>
+          <p>Spend your attention wisely.</p>
+        </div>
+      </header>
+
+      <section class="grid">
+        <div class="stat">
+          <div class="label">Focus Points</div>
+          <div class="value" id="focusPoints">0</div>
+        </div>
+        <div class="stat">
+          <div class="label">High Score</div>
+          <div class="value" id="highScore">0</div>
+        </div>
+        <div class="stat">
+          <div class="label">Streak</div>
+          <div class="value" id="currentStreak">0<span>🔥</span></div>
+        </div>
+        <div class="stat tax">
+          <div class="label">Procrastination Tax</div>
+          <div class="value" id="procrastinationTax">0</div>
+        </div>
+      </section>
+
+      <section class="chart-wrap">
+        <div class="chart-title">Last 7 days</div>
+        <div class="chart" id="chart"></div>
+      </section>
+
+      <footer>Stay mindful. Close tabs early to earn points ✨</footer>
+    </div>
+    <script src="popup.js"></script>
+  </body>
+</html>
